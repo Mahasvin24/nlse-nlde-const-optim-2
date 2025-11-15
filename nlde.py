@@ -60,15 +60,15 @@ def nlde(x_p: torch.Tensor, y_p: torch.Tensor, E: torch.Tensor, F: torch.Tensor)
     return nlde
 
 def test_nlde(max_terms: int, device: torch.device, print_stats: bool = False):
-    count = 4
+    count = 10000000
     x = uniform_values(count).to(device)
     y = uniform_values(count).to(device)
 
     # Reordering so x > y
-    x, y = torch.min(x, y), torch.max(x, y)
+    x, y = torch.max(x, y), torch.min(x, y)
 
     # Subtraction in importance space
-    exact = (y - x).reshape(-1)
+    exact = (x - y).reshape(-1)
 
     # Conversion to delay space (column vectors)
     x_p = - torch.log(x) 
@@ -107,15 +107,14 @@ if __name__ == "__main__":
 
     print(f"Using device {device_type}.")
 
-    test_nlde(max_terms=10, device=device, print_stats=True)
+    test_nlde(max_terms=20, device=device, print_stats=True)
     
     """
     errors = []
-    all_max_terms = [*range(0, 11), 15, 20]
+    all_max_terms = [*range(1, 11), 15, 20]
     for max_terms in all_max_terms:
         errors.append(test_nlde(max_terms=max_terms, device=device, print_stats=True))
 
-    
     plt.plot(all_max_terms, errors, marker='o', linestyle='-', color='red')
     
     plt.title("nLSE Error Using Given Constants")
@@ -126,3 +125,23 @@ if __name__ == "__main__":
 
     plt.show()
     """
+
+# Take a look at the <x_pos, x_neg> stuff
+# I don't understand exact how that workings
+# Implemeting that stuff properly might fix things
+# Ask for help
+# It's confusing tho b/c all the values should be pos
+
+"""
+<x_pos, x_neg> Formula
+
+for a value x (either positive for negative)
+
+x_pos = x if x > 0 else 0
+x_neg = -x if x < 0 else 0
+
+Note: both x_pos and x_neg are non-negative values
+
+Paper link: https://sites.cs.ucsb.edu/~sherwood/pubs/ASPLOS-24-temparith.pdf
+
+"""
