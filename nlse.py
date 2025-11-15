@@ -57,10 +57,10 @@ def nlse(x_p: torch.Tensor, y_p: torch.Tensor, C: torch.Tensor, D: torch.Tensor)
 
     return nlse
 
-def test_nlse(max_terms: int, print_stats: bool = False):
+def test_nlse(max_terms: int, device: torch.device, print_stats: bool = False):
     count = 10000000
-    x = uniform_values(count)
-    y = uniform_values(count)
+    x = uniform_values(count).to(device)
+    y = uniform_values(count).to(device)
 
     # x = np.reshape(gaussian_noise(3), shape=(-1, 1))
     # y = np.reshape(gaussian_noise(3), shape=(-1, 1))
@@ -73,8 +73,8 @@ def test_nlse(max_terms: int, print_stats: bool = False):
     y_p = - torch.log(y)
 
     # Getting constants (row vectors)
-    C = C_VALUES[max_terms]
-    D = D_VALUES[max_terms]
+    C = C_VALUES[max_terms].to(device)
+    D = D_VALUES[max_terms].to(device)
 
     temporal_output = nlse(x_p, y_p, C, D)
     importance_output = torch.exp(- temporal_output)
@@ -93,10 +93,21 @@ def test_nlse(max_terms: int, print_stats: bool = False):
     return error.item()
 
 if __name__ == "__main__":
+    # Device for potential GPU acceleration
+    device_type = 'cpu'
+    if torch.cuda.is_available():
+        device_type = 'cuda'
+    elif torch.backends.mps.is_available():
+        device_type = 'mps'
+
+    device = torch.device(device_type)
+
+    print(f"Using device {device_type}.")
+
     errors = []
     all_max_terms = [*range(0, 11), 15, 20]
     for max_terms in all_max_terms:
-        errors.append(test_nlse(max_terms=max_terms, print_stats=True))
+        errors.append(test_nlse(max_terms=max_terms, device=device, print_stats=True))
 
     plt.plot(all_max_terms, errors, marker='o', linestyle='-', color='red')
     

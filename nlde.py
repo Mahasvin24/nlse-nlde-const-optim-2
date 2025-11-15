@@ -63,8 +63,7 @@ def test_nlde():
     x = uniform_values(count)
     y = uniform_values(count)
 
-    # x = np.reshape(gaussian_noise(3), shape=(-1, 1))
-    # y = np.reshape(gaussian_noise(3), shape=(-1, 1))
+    # Ensuring x > y for each pair
 
     # Addition in importance space
     exact = (x + y).reshape(-1)
