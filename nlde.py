@@ -1,4 +1,5 @@
 import torch
+import matplotlib.pyplot as plt
 
 # Loading constants
 data = torch.load("constants/orig_constants.pt")
@@ -58,32 +59,70 @@ def nlde(x_p: torch.Tensor, y_p: torch.Tensor, E: torch.Tensor, F: torch.Tensor)
 
     return nlde
 
-def test_nlde():
+def test_nlde(max_terms: int, device: torch.device, print_stats: bool = False):
     count = 4
-    x = uniform_values(count)
-    y = uniform_values(count)
+    x = uniform_values(count).to(device)
+    y = uniform_values(count).to(device)
 
-    # Ensuring x > y for each pair
+    # Reordering so x > y
+    x, y = torch.min(x, y), torch.max(x, y)
 
-    # Addition in importance space
-    exact = (x + y).reshape(-1)
+    # Subtraction in importance space
+    exact = (y - x).reshape(-1)
 
     # Conversion to delay space (column vectors)
     x_p = - torch.log(x) 
     y_p = - torch.log(y)
 
     # Getting constants (row vectors)
-    max_terms = 10
-    E = E_VALUES[max_terms]
-    F = F_VALUES[max_terms]
+    E = E_VALUES[max_terms].to(device)
+    F = F_VALUES[max_terms].to(device)
 
     temporal_output = nlde(x_p, y_p, E, F)
     importance_output = torch.exp(- temporal_output)
 
     error = torch.mean(torch.abs(importance_output - exact) / exact * 100)
 
+    # Printing (for testing)
     torch.set_printoptions(sci_mode=False, precision=2)
-    print()
-    print(f"Expected      : {[f"{v:.2f}" for v in exact.tolist()]}")
-    print(f"Approximation : {[f'{v:.2f}' for v in importance_output.tolist()]}")
-    print(f"Error         : {error.item():.2f}%\n")
+    if count < 10 and print_stats:
+        print()
+        print(f"Expected      : {[f"{v:.2f}" for v in exact.tolist()]}")
+        print(f"Approximation : {[f'{v:.2f}' for v in importance_output.tolist()]}")
+        print(f"Error         : {error.item():.2f}%\n")
+    elif print_stats:
+        print(f"Error ({max_terms}): {error.item():.2f}%")
+    
+    return error.item()
+
+if __name__ == "__main__":
+    # Device for potential GPU acceleration
+    device_type = 'cpu'
+    if torch.cuda.is_available():
+        device_type = 'cuda'
+    elif torch.backends.mps.is_available():
+        device_type = 'mps'
+
+    device = torch.device(device_type)
+
+    print(f"Using device {device_type}.")
+
+    test_nlde(max_terms=10, device=device, print_stats=True)
+    
+    """
+    errors = []
+    all_max_terms = [*range(0, 11), 15, 20]
+    for max_terms in all_max_terms:
+        errors.append(test_nlde(max_terms=max_terms, device=device, print_stats=True))
+
+    
+    plt.plot(all_max_terms, errors, marker='o', linestyle='-', color='red')
+    
+    plt.title("nLSE Error Using Given Constants")
+    plt.xlabel("Number of Max Terms")
+    plt.ylabel("Error (avg)")
+
+    plt.grid(True)
+
+    plt.show()
+    """
