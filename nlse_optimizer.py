@@ -135,7 +135,7 @@ def test_model(max_terms):
 if __name__ == '__main__':
     test_model(10)
 
-""" Completed training loop
+""" A more complete version of the training loop (in theory)
 if __name__ == '__main__':
     # Device for potential GPU acceleration
     device_type = 'cpu'
