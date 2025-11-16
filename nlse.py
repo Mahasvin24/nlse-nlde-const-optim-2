@@ -104,20 +104,22 @@ if __name__ == "__main__":
 
     print(f"Using device {device_type}.")
 
-    errors = []
+    accuracy = []
     all_max_terms = [*range(0, 11), 15, 20]
     for max_terms in all_max_terms:
-        errors.append(test_nlse(max_terms=max_terms, device=device, print_stats=True))
+        accuracy.append(100 - test_nlse(max_terms=max_terms, device=device, print_stats=True))
 
-    plt.plot(all_max_terms, errors, marker='o', linestyle='-', color='red')
+    plt.plot(all_max_terms, accuracy, marker='o', linestyle='-', color='red')
     
-    plt.title("nLSE Error Using Given Constants")
+    plt.title("nLSE Accuracy Using Given Constants")
     plt.xlabel("Number of Max Terms")
-    plt.ylabel("Error (avg)")
+    plt.ylabel("Accuracy (avg)")
 
     plt.grid(True)
 
     plt.show()
+
+# Why is my accuracy so much lower...
 
 
     
