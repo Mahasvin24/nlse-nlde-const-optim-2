@@ -3,12 +3,12 @@ import torch.nn as nn
 from utils import nlse, uniform_values
 
 # HYPERPARAMETERS
-num_epochs = 1000
-batch_size = 1000000
-learning_rate = 0.001
+num_epochs = 1_000
+batch_size = 100_000
+learning_rate = 3e-2
 
 # Loading constants
-data = torch.load("constants/updated_constants.pt")
+data = torch.load("constants/learned_constants.pt")
 C_VALUES = data["C_VALUES"]
 D_VALUES = data["D_VALUES"]
 
@@ -94,6 +94,7 @@ def test_model(max_terms):
     
     # Creating device (for potential GPU acceleration)
     device = torch.device(device_type)
+    print(f"Running with device {device_type}.")
 
     print()
     print(f"C={C_VALUES[max_terms]}")
@@ -133,7 +134,7 @@ def test_model(max_terms):
     # D_VALUES[max_terms] = D
 
 if __name__ == '__main__':
-    test_model(10)
+    test_model(7)
 
 """ A more complete version of the training loop (in theory)
 if __name__ == '__main__':
