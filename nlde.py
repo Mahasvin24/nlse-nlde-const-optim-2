@@ -52,6 +52,10 @@ def nlde(x_p: torch.Tensor, y_p: torch.Tensor, E: torch.Tensor, F: torch.Tensor)
     X = x_p + E # shape=(N, max_terms) --> each row is an example
     Y = y_p + F # shape=(N, max_terms) --> each row is an example
 
+    # X and Y must contain positive values
+    X = torch.relu(X)
+    Y = torch.relu(Y)
+
     # inhibit(x + E, y + F) --> each row is an example
     inhibit_terms = inhibit(X, Y) # shape=(N, max_terms) --> element wise (X INHIBITS Y)
     
@@ -64,41 +68,42 @@ def test_nlde(max_terms: int, device: torch.device, print_stats: bool = False):
     x = uniform_values(count).to(device)
     y = uniform_values(count).to(device)
 
-    print(f"\nx before: {x[0:5].reshape(-1)}")
-    print(f"y before: {y[0:5].reshape(-1)}")
-    print(f"All pos? {torch.all(x >= 0) and torch.all(y >= 0)}\n")
+    # print(f"\nx before: {x[0:5].reshape(-1)}")
+    # print(f"y before: {y[0:5].reshape(-1)}")
+    # print(f"All pos? {torch.all(x >= 0) and torch.all(y >= 0)}\n")
 
     # Reordering so x > y
     x, y = torch.max(x, y), torch.min(x, y)
 
-    print(f"x after: {x[0:5].reshape(-1)}")
-    print(f"y after: {y[0:5].reshape(-1)}")
-    print(f"All pos? {torch.all(x >= 0) and torch.all(y >= 0)}\n")
+    # print(f"x after: {x[0:5].reshape(-1)}")
+    # print(f"y after: {y[0:5].reshape(-1)}")
+    # print(f"All pos? {torch.all(x >= 0) and torch.all(y >= 0)}\n")
 
     # Subtraction in importance space
     exact = (x - y).reshape(-1)
 
-    print(f"x - y: {exact[0:5].reshape(-1)}")
-    print(f"All pos? {torch.all(exact >= 0)}\n")
+    # print(f"x - y: {exact[0:5].reshape(-1)}")
+    # print(f"All pos? {torch.all(exact >= 0)}\n")
 
     # Conversion to delay space (column vectors)
     # NOTE: x_p < y_p 
-    x_p = - torch.log(x) 
+    x_p = - torch.log(x)
     y_p = - torch.log(y)
 
-    print(f"x_p: {x_p[0:5].reshape(-1)}")
-    print(f"y_p: {y_p[0:5].reshape(-1)}")
-    print(f"All pos? {torch.all(x_p >= 0) and torch.all(y_p >= 0)}\n")
+    # print(f"x_p: {x_p[0:5].reshape(-1)}")
+    # print(f"y_p: {y_p[0:5].reshape(-1)}")
+    # print(f"All pos? {torch.all(x_p >= 0) and torch.all(y_p >= 0)}\n")
 
     # Getting constants (row vectors)
     E = E_VALUES[max_terms].to(device)
     F = F_VALUES[max_terms].to(device)
 
-    print(f"x_p + E: {x_p[0] + E}")
-    print(f"y_p + F: {y_p[0] + F}")
-    print(f"All pos? {torch.all(x_p + E > 0) and torch.all(y_p + F >= 0)} <-- usually False\n") 
+    # print(f"x_p + E: {x_p[0] + E}")
+    # print(f"y_p + F: {y_p[0] + F}")
+    # print(f"All pos? {torch.all(x_p + E > 0) and torch.all(y_p + F >= 0)} <-- usually False\n") 
 
-    temporal_output = nlde(y_p, x_p, E, F)
+    temporal_output = nlde(x_p, y_p, E, F)
+    
     importance_output = torch.exp(- temporal_output) # temporal -> importance space
 
     error = torch.mean(torch.abs(importance_output - exact) / (exact + 1e-12) * 100)
@@ -127,11 +132,24 @@ if __name__ == "__main__":
 
     print(f"Using device {device_type}.")
 
+    accuracy = []
     all_max_terms = [*range(1, 11), 15, 20]
-    all_max_terms = [5]
+    # all_max_terms = [5]
 
     for max_terms in all_max_terms:
-        test_nlde(max_terms=max_terms, device=device, print_stats=True)
+        accuracy.append(100 - test_nlde(max_terms=max_terms, device=device, print_stats=True))
+
+    plt.plot(all_max_terms, accuracy, marker='o', linestyle='-', color='orange')
+    
+    plt.title("nLDE Accuracy Using Given Constants")
+    plt.xlabel("Number of Max Terms")
+    plt.ylabel("Accuracy (avg)")
+
+    plt.ylim(0, 100)
+
+    plt.grid(True)
+
+    plt.show()
     
     """
     errors = []
@@ -167,5 +185,4 @@ x_neg = -x if x < 0 else 0
 Note: both x_pos and x_neg are non-negative values
 
 Paper link: https://sites.cs.ucsb.edu/~sherwood/pubs/ASPLOS-24-temparith.pdf
-
 """

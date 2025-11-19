@@ -77,6 +77,7 @@ def test_nlse(max_terms: int, device: torch.device, print_stats: bool = False):
     D = D_VALUES[max_terms].to(device)
 
     temporal_output = nlse(x_p, y_p, C, D)
+    
     importance_output = torch.exp(- temporal_output)
 
     error = torch.mean(torch.abs(importance_output - exact) / exact * 100)
@@ -109,7 +110,7 @@ if __name__ == "__main__":
     for max_terms in all_max_terms:
         accuracy.append(100 - test_nlse(max_terms=max_terms, device=device, print_stats=True))
 
-    plt.plot(all_max_terms, accuracy, marker='o', linestyle='-', color='red')
+    plt.plot(all_max_terms, accuracy, marker='o', linestyle='-', color='blue')
     
     plt.title("nLSE Accuracy Using Given Constants")
     plt.xlabel("Number of Max Terms")

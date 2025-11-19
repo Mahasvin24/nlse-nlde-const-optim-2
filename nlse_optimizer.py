@@ -32,16 +32,17 @@ class nLSEModel(nn.Module):
         y_p = - torch.log(y)
 
         # Forward nLSE pass
-        approx = nlse(x_p, y_p, self.C, self.D)
+        delay_approx = nlse(x_p, y_p, self.C, self.D)
 
-        # Exact values (in delay space)
-        exact = - torch.log((x + y).reshape(-1))
+        # Converting to importance space
+        approx = torch.exp(- delay_approx)
 
-        return exact, approx
+        return approx
     
     def error(self, x, y):
         # Inference
-        exact, approx = self.forward(x, y)
+        exact = (x + y).reshape(-1)
+        approx = self.forward(x, y)
 
         # Convert to importance space
         exact = torch.exp(-exact)
@@ -65,15 +66,24 @@ class nLSETrainer:
         for _ in range(self.num_epochs):
             self.optimizer.zero_grad() # clearing gradients
 
-            # Creating data
+            # Generating data
             x = uniform_values(self.batch_size).to(self.device)
             y = uniform_values(self.batch_size).to(self.device)
 
-            exact, approx = self.model(x, y) # forward passs
-            loss = self.loss_fn(approx, exact) # loss calculation
+            # Exact output
+            exact = (x + y).reshape(-1)
 
-            loss.backward() # compute gradients
-            self.optimizer.step() # Adam optimized gradient descent
+            # Forward pass through model
+            approx = self.model(x, y) 
+
+            # Loss Calculation
+            loss = self.loss_fn(approx, exact) 
+
+            # Compute gradients
+            loss.backward() 
+
+            # Gradient descent (Adam optimized)
+            self.optimizer.step() 
 
         return self.model.C.detach().cpu(), self.model.D.detach().cpu()
     
