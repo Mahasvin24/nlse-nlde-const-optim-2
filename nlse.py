@@ -120,7 +120,6 @@ if __name__ == "__main__":
 
     plt.show()
 
-# Why is my accuracy so much lower...
 
 
     
