@@ -1,14 +1,17 @@
 import torch
 import torch.nn as nn
-from utils import nlse, uniform_values
+import matplotlib.pyplot as plt
+from utils import nlse, nlse_noisy, uniform_values, rnrmse
 
 # HYPERPARAMETERS
-num_epochs = 1_000
+num_epochs = 1000
 batch_size = 100_000
-learning_rate = 3e-2
+test_size = 1_000_000
+learning_rate = 1e-2
 
 # Loading constants
-data = torch.load("constants/learned_constants.pt")
+INPUT_FILE = "learned_constants.pt"
+data = torch.load(f"constants/{INPUT_FILE}")
 C_VALUES = data["C_VALUES"]
 D_VALUES = data["D_VALUES"]
 
@@ -25,56 +28,36 @@ class nLSEModel(nn.Module):
         self.C = nn.Parameter(C_VALUES[max_terms].clone().detach())
         self.D = nn.Parameter(D_VALUES[max_terms].clone().detach())
 
-
-    def forward(self, x, y):
-        # Calculating x_p and y_p
-        x_p = - torch.log(x)
-        y_p = - torch.log(y)
-
-        # Forward nLSE pass
-        delay_approx = nlse(x_p, y_p, self.C, self.D)
-
-        # Converting to importance space
-        approx = torch.exp(- delay_approx)
-
-        return approx
-    
-    def error(self, x, y):
-        # Inference
-        exact = (x + y).reshape(-1)
-        approx = self.forward(x, y)
-
-        # Convert to importance space
-        exact = torch.exp(-exact)
-        approx = torch.exp(-approx)
-
-        # Calculate 
-        error = torch.mean(torch.abs(approx - exact) / exact * 100)
-
-        return error
-
+    def forward(self, x, y, noisy: bool = False) -> torch.tensor:
+        if not noisy:
+            return nlse(x, y, self.C, self.D)
+        else:
+            return nlse_noisy(x, y, self.C, self.D)
+        
 class nLSETrainer:
-    def __init__(self, model, batch_size, num_epochs, learning_rate, device: torch.device):
+    def __init__(self, model, batch_size, test_size, num_epochs, learning_rate, noisy, device: torch.device):
         self.model = model
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        self.loss_fn = nn.MSELoss()
+        self.loss_fn = lambda pred, target: rnrmse(pred, target)
         self.num_epochs = num_epochs
         self.batch_size = batch_size
+        self.test_size = test_size
         self.device = device
+        self.noisy = noisy
 
     def train(self):
         for _ in range(self.num_epochs):
-            self.optimizer.zero_grad() # clearing gradients
+            # Clearing gradients
+            self.optimizer.zero_grad() 
 
             # Generating data
             x = uniform_values(self.batch_size).to(self.device)
             y = uniform_values(self.batch_size).to(self.device)
 
             # Exact output
+            # exact = torch.exp(- (- torch.log(torch.exp(-x_p) + torch.exp(-y_p)))).reshape(-1)
             exact = (x + y).reshape(-1)
-
-            # Forward pass through model
-            approx = self.model(x, y) 
+            approx = self.model(x, y, noisy=self.noisy)
 
             # Loss Calculation
             loss = self.loss_fn(approx, exact) 
@@ -89,12 +72,16 @@ class nLSETrainer:
     
     def evaluate_error(self):
         # Creating data
-        x = uniform_values(self.batch_size * 10).to(self.device)
-        y = uniform_values(self.batch_size * 10).to(self.device)
+        x = uniform_values(self.test_size).to(self.device)
+        y = uniform_values(self.test_size).to(self.device)
+        
+        # Exact and approximate outputs
+        exact = (x + y).reshape(-1)
+        approx = self.model.forward(x, y, noisy=self.noisy)
 
-        return self.model.error(x, y)
+        return self.loss_fn(approx, exact).item()
 
-def test_model(max_terms):
+def test_model(max_terms, print_stats: bool = False):
     # Finding device type 
     device_type = 'cpu'
     if torch.cuda.is_available():
@@ -102,27 +89,34 @@ def test_model(max_terms):
     elif torch.backends.mps.is_available():
         device_type = 'mps'
     
+    # TEMPORARY OVERRIDE
+    # device_type = 'cpu'
+
     # Creating device (for potential GPU acceleration)
     device = torch.device(device_type)
-    print(f"Running with device {device_type}.")
 
-    print()
-    print(f"C={C_VALUES[max_terms]}")
-    print(f"D={D_VALUES[max_terms]}")
-    print()
+    if print_stats:
+        print(f"Running with device {device_type}.")
+        print()
+        print(f"C={C_VALUES[max_terms]}")
+        print(f"D={D_VALUES[max_terms]}")
+        print()
 
     model = nLSEModel(max_terms, batch_size).to(device)
     trainer = nLSETrainer(
         model=model, 
         batch_size=batch_size, 
+        test_size=test_size,
         num_epochs=num_epochs, 
         learning_rate=learning_rate, 
+        noisy=False,
         device=device
     )
 
     # Evaluate error BEFORE training
-    loss_before = trainer.evaluate_error()
-    print(f"Error before training: {loss_before:.2f}%")
+    loss_before = trainer.evaluate_error() * 100
+    if print_stats:
+        print(f"Error before training: {loss_before:.2f}%")
 
     # Trained values
     C_new, D_new = trainer.train()
@@ -132,19 +126,47 @@ def test_model(max_terms):
     model.D.data = D_new.to(device)
 
     # Evaluate error AFTER training
-    loss_after = trainer.evaluate_error()
-    print(f"Error after training: {loss_after:.2f}%")
+    loss_after = trainer.evaluate_error() * 100
+
+    # Save new constants
+    if loss_after < loss_before and INPUT_FILE != "orig_constants.pt":
+        C_VALUES[max_terms] = C_new
+        D_VALUES[max_terms] = D_new
+        torch.save(
+            {"C_VALUES": C_VALUES, "D_VALUES": D_VALUES},
+            "constants/learned_constants.pt"
+        )
+    
+    # Overall improvement
+    print(f"Error for {max_terms:<2} maxterms: {loss_before:>5.5f}% -> {min(loss_after, loss_before):>4.5f}% (improvement {max(0,loss_before-loss_after):>5.5f})")
 
     # New constants
-    print(f"\nLearned C={C_new}")
-    print(f"Learned D={D_new}")
+    if print_stats:
+        print(f"\nLearned C={C_new}")
+        print(f"Learned D={D_new}")
 
     # Update parameters in constants/updated_constants.pt
     # C_VALUES[max_terms] = C
     # D_VALUES[max_terms] = D
 
+    return loss_after
+
 if __name__ == '__main__':
-    test_model(7)
+    accuracy = []
+    all_max_terms = [*range(1, 11), 15, 20]
+    # all_max_terms = [20] # TEMPORARY OVERRIDE FOR TESTING
+    for max_terms in all_max_terms:
+        err = test_model(max_terms=max_terms, print_stats=False)
+        accuracy.append(100 - err)
+
+    plt.plot(all_max_terms, accuracy, marker='o', linestyle='-', color='blue')
+    
+    plt.title("nLSE Accuracy With Learned Constants")
+    plt.xlabel("Number of Max Terms")
+    plt.ylabel("Accuracy (avg)")
+    plt.ylim(90, 100) # to match the style of the paper
+    plt.grid(True)
+    plt.show()
 
 """ A more complete version of the training loop (in theory)
 if __name__ == '__main__':
