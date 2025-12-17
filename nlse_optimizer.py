@@ -7,7 +7,7 @@ from utils import nlse, nlse_noisy, uniform_values, rnrmse
 num_epochs = 1000
 batch_size = 100_000
 test_size = 1_000_000
-learning_rate = 1e-2
+learning_rate = 1e-3
 
 # Loading constants
 INPUT_FILE = "learned_constants.pt"
@@ -28,11 +28,11 @@ class nLSEModel(nn.Module):
         self.C = nn.Parameter(C_VALUES[max_terms].clone().detach())
         self.D = nn.Parameter(D_VALUES[max_terms].clone().detach())
 
-    def forward(self, x, y, noisy: bool = False) -> torch.tensor:
+    def forward(self, x_p, y_p, noisy: bool = False) -> torch.tensor:
         if not noisy:
-            return nlse(x, y, self.C, self.D)
+            return nlse(x_p, y_p, self.C, self.D)
         else:
-            return nlse_noisy(x, y, self.C, self.D)
+            return nlse_noisy(x_p, y_p, self.C, self.D)
         
 class nLSETrainer:
     def __init__(self, model, batch_size, test_size, num_epochs, learning_rate, noisy, device: torch.device):
@@ -50,14 +50,21 @@ class nLSETrainer:
             # Clearing gradients
             self.optimizer.zero_grad() 
 
-            # Generating data
+            # Generating uniform importance values
             x = uniform_values(self.batch_size).to(self.device)
             y = uniform_values(self.batch_size).to(self.device)
 
-            # Exact output
-            # exact = torch.exp(- (- torch.log(torch.exp(-x_p) + torch.exp(-y_p)))).reshape(-1)
-            exact = (x + y).reshape(-1)
-            approx = self.model(x, y, noisy=self.noisy)
+            # Converting to delay space values
+            x_p = - torch.log(x)
+            y_p = - torch.log(y)
+
+            # Exact and approximation (delay space)
+            exact = - torch.log(torch.exp(-x_p) + torch.exp(-y_p))
+            approx = self.model(x_p, y_p, noisy=self.noisy)
+
+            # Exact and approximation (importance space)
+            exact = torch.exp(-exact).reshape(-1)
+            approx = torch.exp(-approx)
 
             # Loss Calculation
             loss = self.loss_fn(approx, exact) 
@@ -71,13 +78,21 @@ class nLSETrainer:
         return self.model.C.detach().cpu(), self.model.D.detach().cpu()
     
     def evaluate_error(self):
-        # Creating data
+        # Generating uniform importance values
         x = uniform_values(self.test_size).to(self.device)
         y = uniform_values(self.test_size).to(self.device)
-        
-        # Exact and approximate outputs
-        exact = (x + y).reshape(-1)
-        approx = self.model.forward(x, y, noisy=self.noisy)
+
+        # Converting to delay space values
+        x_p = - torch.log(x)
+        y_p = - torch.log(y)
+
+        # Exact and approximation (delay space)
+        exact_delay = - torch.log(torch.exp(-x_p) + torch.exp(-y_p))
+        approx_delay = self.model(x_p, y_p, noisy=self.noisy)
+
+        # Exact and approximation (importance space)
+        exact = torch.exp(-exact_delay).reshape(-1)
+        approx = torch.exp(-approx_delay)
 
         return self.loss_fn(approx, exact).item()
 
@@ -138,7 +153,7 @@ def test_model(max_terms, print_stats: bool = False):
         )
     
     # Overall improvement
-    print(f"Error for {max_terms:<2} maxterms: {loss_before:>5.5f}% -> {min(loss_after, loss_before):>4.5f}% (improvement {max(0,loss_before-loss_after):>5.5f})")
+    print(f"Error for {max_terms:<2} maxterms: {loss_before:>5.5f}% -> {min(loss_after, loss_before):>4.5f}% (improvement {max(0,loss_before-loss_after):>5.5f}%)")
 
     # New constants
     if print_stats:
@@ -167,30 +182,3 @@ if __name__ == '__main__':
     plt.ylim(90, 100) # to match the style of the paper
     plt.grid(True)
     plt.show()
-
-""" A more complete version of the training loop (in theory)
-if __name__ == '__main__':
-    # Device for potential GPU acceleration
-    device_type = 'cpu'
-    if torch.cuda.is_available():
-        device_type = 'cuda'
-    elif torch.backends.mps.is_available():
-        device_type = 'mps'
-
-    device = torch.device(device_type)
-
-    # Array of all possible max_terms
-    all_max_terms = [*range(1, 11), 15, 20]
-
-    all_max_terms = [10] # MANUAL OVERRIDE JUST FOR TESTING
-
-    for max_terms in all_max_terms:
-        # Create and train model
-        model = nLSEModel(max_terms, batch_size).to(device)
-        trainer = nLSETrainer(model=model, batch_size=batch_size, num_epochs=num_epochs, learning_rate=learning_rate, device=device)
-        C, D = trainer.train()
-
-        # Update parameters in constants/updated_constants.pt
-        C_VALUES[max_terms] = C
-        D_VALUES[max_terms] = D
-"""

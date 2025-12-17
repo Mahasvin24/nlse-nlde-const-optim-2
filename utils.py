@@ -37,9 +37,9 @@ def guassian_noise(n, device, mean=0.0, std=0.01):
 # ---------------------------
 
 # nLSE
-def nlse(x: torch.Tensor, y: torch.Tensor, C: torch.Tensor, D: torch.Tensor) -> torch.Tensor:
+def nlse(x_p: torch.Tensor, y_p: torch.Tensor, C: torch.Tensor, D: torch.Tensor) -> torch.Tensor:
     """
-    !!! Inputs and Outputs are in Importance Space !!!
+    !!! Inputs and Outputs are in Delay Space !!!
     Performs the nLSE described in the paper 
     Beyond 7-10, max_terms, there isn't much of a benefit (according to ASPLOS paper)
     max_terms are decided by the shape of C and D
@@ -54,14 +54,25 @@ def nlse(x: torch.Tensor, y: torch.Tensor, C: torch.Tensor, D: torch.Tensor) -> 
         test: prints the matrix before minum when set to true
     """
     # Mismatched lengths
-    if x.shape != y.shape:
+    if x_p.shape != y_p.shape:
         raise ValueError("Arguments x and y must have the same shape.")
     if C.shape != D.shape:
         raise ValueError("Arguments C and D must have the same shape.")
-    
-    # Temporal x, y
-    x_p = - torch.log(x)
-    y_p = - torch.log(y)
+
+    # K value shift to avoid negative terms
+    K = -torch.min(torch.cat((C, D))).to(x_p.device)
+    x_p = x_p + K
+    y_p = y_p + K
+
+    # ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! 
+    # x_p should be smaller than y_p but flipped works better????
+    # ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !
+
+    # Ensuring x_p <= y_p
+    x_p, y_p = (
+        torch.maximum(x_p, y_p).reshape(-1, 1).to(x_p.device), 
+        torch.minimum(x_p, y_p).reshape(-1, 1).to(x_p.device)
+    )
 
     X = x_p + C # shape=(N, max_terms) --> each row is an example
     Y = y_p + D # shape=(N, max_terms) --> each row is an example
@@ -73,9 +84,7 @@ def nlse(x: torch.Tensor, y: torch.Tensor, C: torch.Tensor, D: torch.Tensor) -> 
     
     nlse, _ = torch.min(all_terms, dim=1) # shape=(N,)
 
-    approx = torch.exp(- nlse)
-
-    return approx
+    return nlse - K
 
 # nLDE
 def nlde(x_p: torch.Tensor, y_p: torch.Tensor, E: torch.Tensor, F: torch.Tensor) -> torch.Tensor:

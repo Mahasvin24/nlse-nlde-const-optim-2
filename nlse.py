@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from utils import uniform_values, nlse
 
 # Loading constants
-data = torch.load("constants/learned_constants.pt")
+data = torch.load("constants/orig_constants.pt")
 C_VALUES = data["C_VALUES"]
 D_VALUES = data["D_VALUES"]
 
@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     # Accuracy testing for different max_terms
     accuracy = []
-    all_max_terms = [*range(0, 11), 15, 20]
+    all_max_terms = [*range(1, 11), 15, 20]
     # all_max_terms = [5]
     for max_terms in all_max_terms:
         accuracy.append(100 - test_nlse(max_terms=max_terms, device=device, print_stats=True))

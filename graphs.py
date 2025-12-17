@@ -1,6 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
-from utils import nlse
+from utils import nlse, rnrmse
 
 # Load constants
 orig_data = torch.load("constants/orig_constants.pt")
@@ -23,31 +23,26 @@ def nlse_addition_graph(max_terms: int):
     print(C_old)
     print(C_new)
 
-    xs = torch.linspace(0, 2.0, 400)
+    points = 800
+    x_delay = torch.linspace(0, 2.0, points)
 
     # Exact curve (delay space)
-    ys_exact_delay = -torch.log(torch.exp(-xs) + torch.exp(xs))
+    ys_exact_delay = -torch.log(torch.exp(-x_delay) + torch.exp(-(-x_delay)))
 
-    # Approximation helper
-    def compute_approx(xs, C, D):
-        vals = []
-        for x_prime in xs:
-            y_prime = -x_prime
-            candidates = [x_prime, y_prime]
-            for Ci, Di in zip(C.flatten(), D.flatten()):
-                candidates.append(torch.max(x_prime + Ci, y_prime + Di))
-            vals.append(torch.min(torch.stack(candidates)))
-        return torch.stack(vals)
+    # Approximations
+    ys_approx_old = nlse(x_delay, -x_delay, C_old, D_old)
+    ys_approx_new = nlse(x_delay, -x_delay, C_new, D_new)
 
-    ys_approx_old = compute_approx(xs, C_old, D_old)
-    ys_approx_new = compute_approx(xs, C_new, D_new)
+    print()
+    print(f"Old line error: {rnrmse(ys_approx_old, ys_exact_delay)}")
+    print(f"New line error: {rnrmse(ys_approx_new, ys_exact_delay)}")
 
     # Plot
     plt.figure(figsize=(7, 4))
 
     # Exact addition
     plt.plot(
-        xs.numpy(), 
+        x_delay.numpy(), 
         ys_exact_delay.numpy(),
         label="Exact LSE(x', -x')", 
         color="blue"
@@ -55,7 +50,7 @@ def nlse_addition_graph(max_terms: int):
 
     # nLSE with old values
     plt.plot(
-        xs.numpy(), 
+        x_delay.numpy(), 
         ys_approx_old.numpy(),
         label=f"{max_terms} max-term approx (old)", 
         color="orange"
@@ -63,7 +58,7 @@ def nlse_addition_graph(max_terms: int):
 
     # nLSE with new values
     plt.plot(
-        xs.numpy(), 
+        x_delay.numpy(), 
         ys_approx_new.numpy(),
         label=f"{max_terms} max-term approx (new)",
         color="#66cc66", alpha=0.6
@@ -81,5 +76,5 @@ def nlse_addition_graph(max_terms: int):
 
 
 if __name__ == "__main__":
-    nlse_addition_graph(3)
+    nlse_addition_graph(7)
  
