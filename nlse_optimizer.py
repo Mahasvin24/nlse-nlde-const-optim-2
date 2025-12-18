@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-from utils import nlse, nlse_noisy, uniform_values, rnrmse
+from utils.helpers import nlse, nlse_noisy, uniform_values, rnrmse
 
 # HYPERPARAMETERS
 num_epochs = 1000

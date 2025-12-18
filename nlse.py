@@ -1,6 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
-from utils import uniform_values, nlse
+from utils.helpers import uniform_values, nlse
 
 # Loading constants
 data = torch.load("constants/orig_constants.pt")

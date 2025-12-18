@@ -1,6 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
-from utils import nlse, rnrmse
+from utils.helpers import rnrmse
+from utils.temporal_artithmetic import nlse
 
 # Load constants
 orig_data = torch.load("constants/orig_constants.pt")
