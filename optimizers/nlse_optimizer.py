@@ -1,16 +1,17 @@
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-from utils.helpers import nlse, nlse_noisy, uniform_values, rnrmse
+from utils.helpers import uniform_values, rnrmse
+from utils.temporal_artithmetic import nlse, nlse_noisy
 
 # HYPERPARAMETERS
 num_epochs = 1000
 batch_size = 100_000
 test_size = 1_000_000
-learning_rate = 1e-3
+learning_rate = 1e-2
 
 # Loading constants
-INPUT_FILE = "learned_constants.pt"
+INPUT_FILE = "orig_constants.pt"
 data = torch.load(f"constants/{INPUT_FILE}")
 C_VALUES = data["C_VALUES"]
 D_VALUES = data["D_VALUES"]
