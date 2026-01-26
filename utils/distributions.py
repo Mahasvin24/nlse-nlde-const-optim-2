@@ -40,7 +40,7 @@ class BucketDistribution:
 
         self.update_sampling = True
 
-    def update(self):
+    def _update(self):
         """
         Recalculate bucket arrays and probabilities for sampling
         """
@@ -61,12 +61,13 @@ class BucketDistribution:
             raise ValueError("n must be positive.")
 
         if self.update_sampling:
-            self.update()
+            self._update()
 
-        # Sample bucket indices according to probabilities
+        # Sample bucket based on probabilities
         sampled_buckets = np.random.choice(self.bucket_indices, size=n, p=self.probs)
         sampled_buckets = torch.tensor(sampled_buckets, dtype=torch.float32)
-        # Uniformly sample within each bucket
+        
+        # Uniformly sampling within buckets
         samples = sampled_buckets * self.bucket_size + torch.rand(n) * self.bucket_size
         return samples
 

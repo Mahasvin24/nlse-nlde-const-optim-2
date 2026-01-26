@@ -1,23 +1,19 @@
 from utils.distributions import BucketDistribution
 import time
+import torch
 
 # Timer
 start = time.time()
 
-dist = BucketDistribution(bucket_size=0.5)
+dist = BucketDistribution(bucket_size=0.2)
 
-# Add a variety of values
-vals = [
-    -2.3, -2.1, -1.9, -1.2, -1.0, -0.8,
-    -0.1,  0.0,  0.2, 0.6,  0.7,  0.9,
-     1.4,  1.6,  1.8, 2.1,  2.4,  2.6,
-     10, 12, 12, 12, 12, 12, 12, 12, 12
-]
+# Testing with normal vals
+count = 100000
+vals = torch.normal(mean=12, std=2, size=(count,))
 
-for v in vals:
-    dist.add(v)
+dist.add(vals)
 
-# # Show internal state
+# Stats n stuff
 print("Total data points:", dist.data_points)
 print("Buckets:")
 for bucket in sorted(dist.data):
@@ -25,13 +21,13 @@ for bucket in sorted(dist.data):
     hi = lo + dist.bucket_size
     print(f"[{lo:.1f}, {hi:.1f}): {dist.data[bucket]}")
 
-# Sample from the distribution
+# Sampling
 samples = dist.sample(10)
 print("\nSamples:", samples)
 
 # End
 end = time.time()
-print(f"TIME: {end - start:.5f}")
+print(f"TIME: {end - start:.5f} (for {count} data points)")
 
-# Visualize
+# Graphing
 dist.graph()
