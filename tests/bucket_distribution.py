@@ -1,4 +1,8 @@
 from utils.distributions import BucketDistribution
+import time
+
+# Timer
+start = time.time()
 
 dist = BucketDistribution(bucket_size=0.5)
 
@@ -24,6 +28,10 @@ for bucket in sorted(dist.data):
 # Sample from the distribution
 samples = dist.sample(10)
 print("\nSamples:", samples)
+
+# End
+end = time.time()
+print(f"TIME: {end - start:.5f}")
 
 # Visualize
 dist.graph()

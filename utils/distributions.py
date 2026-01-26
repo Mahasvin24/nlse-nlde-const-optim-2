@@ -1,90 +1,84 @@
-import numpy as np
+import torch
 from collections import defaultdict
+import numpy as np
 import matplotlib.pyplot as plt
 
-# Simple distribution class (for numerical values -- floats)
 class BucketDistribution:
-    def __init__(self, bucket_size=1.0, min_val=None, max_val=None):
-        # Field variables
-        self.data = defaultdict(int) # bucket : count
+    def __init__(self, bucket_size=1.0):
+        self.data = defaultdict(int)  # bucket_index : count
         self.data_points = 0
         self.bucket_size = bucket_size
-        self.min_val = min_val
-        self.max_val = max_val
 
         # Sampling state
-        self.bucket_indicies = []
-        self.bucket_counts = np.array([])  
-        self.probs = np.array([])         
+        self.bucket_indices = np.array([])
+        self.bucket_counts = np.array([])
+        self.probs = np.array([])
         self.update_sampling = True
 
-    def bucket_of(self, val: float):
+    def add(self, val):
         """
-        Calculating the bucket a data point belongs to
+        Add a scalar or torch.Tensor of values (vectorized)
         """
-        return int(np.floor(val / self.bucket_size))
-    
+        if isinstance(val, torch.Tensor):
+            val = val.flatten()
+            # Compute integer bucket indices
+            bucket_indices = (val / self.bucket_size).to(torch.int64)
+            # Count occurrences using bincount
+            min_idx = bucket_indices.min().item()
+            # Shift indices to start at 0 for bincount
+            shifted_indices = bucket_indices - min_idx
+            counts = torch.bincount(shifted_indices)
+            # Update defaultdict using actual bucket indices
+            for i, count in enumerate(counts.tolist()):
+                if count > 0:
+                    self.data[i + min_idx] += count
+            self.data_points += val.numel()
+        else:
+            idx = int(val / self.bucket_size)
+            self.data[idx] += 1
+            self.data_points += 1
 
-    def add(self, val: float):
-        """
-        Adding to the data distribution
-        """
-        self.data[self.bucket_of(val)] += 1 # add to bucket
-        self.data_points += 1               # add to overall class count
-        self.update_sampling = True         # reupdate with new info
+        self.update_sampling = True
 
     def update(self):
         """
-        Recalculating bucket indicies and probabilites for sampling
-        """
-        self.bucket_indicies = list(self.data.keys())
-        self.bucket_counts = np.array(
-            [self.data[idx] for idx in self.bucket_indicies], dtype=float
-        )
-        self.probs = self.bucket_counts / self.data_points
-        self.update_sampling = False       
-
-    def sample(self, n:int):
-        """
-        Sampling from the bucketed distribution
+        Recalculate bucket arrays and probabilities for sampling
         """
         if self.data_points == 0:
-            raise ValueError("No data points to sample from")
+            raise ValueError("No data to update.")
+        self.bucket_indices = np.array(list(self.data.keys()), dtype=np.int64)
+        self.bucket_counts = np.array([self.data[idx] for idx in self.bucket_indices], dtype=float)
+        self.probs = self.bucket_counts / self.data_points
+        self.update_sampling = False
+
+    def sample(self, n: int):
+        """
+        Sample n points from the bucketed distribution (returns torch.Tensor of floats)
+        """
+        if self.data_points == 0:
+            raise ValueError("No data points to sample from.")
         if n <= 0:
-            raise ValueError("n must be positive")
-        
+            raise ValueError("n must be positive.")
+
         if self.update_sampling:
             self.update()
 
-        # Randomly choosing buckets
-        sampled_buckets = np.random.choice(
-            self.bucket_indicies, size=n, p=self.probs
-        )
-        
-        # Sample uniformly within each bucket
-        return np.array([
-            np.random.uniform(
-                idx * self.bucket_size,
-                (idx + 1) * self.bucket_size
-            )
-            for idx in sampled_buckets
-        ])
-    
+        # Sample bucket indices according to probabilities
+        sampled_buckets = np.random.choice(self.bucket_indices, size=n, p=self.probs)
+        sampled_buckets = torch.tensor(sampled_buckets, dtype=torch.float32)
+        # Uniformly sample within each bucket
+        samples = sampled_buckets * self.bucket_size + torch.rand(n) * self.bucket_size
+        return samples
+
     def graph(self):
         """
-        Graphing a bucketed histogram from distribution
+        Display a histogram of the distribution
         """
         if self.data_points == 0:
             raise ValueError("No data to graph.")
-
-        # Sort buckets
         buckets = sorted(self.data.keys())
         counts = np.array([self.data[b] for b in buckets], dtype=float)
-
-        # Convert counts to percentages
         percents = 100.0 * counts / self.data_points
-
-        # Convert bucket indices to bucket centers
         x = [(b + 0.5) * self.bucket_size for b in buckets]
 
         plt.figure()
@@ -93,4 +87,3 @@ class BucketDistribution:
         plt.ylabel("Percent (%)")
         plt.title("Bucketed Probability Distribution")
         plt.show()
-
