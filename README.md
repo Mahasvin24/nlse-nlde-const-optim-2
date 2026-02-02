@@ -52,6 +52,10 @@ nlse-nlde-const-optim-2/
 │   ├── learned_constants.pt     # Optimized constants
 │   ├── load_orig_constants.py   # Load paper constants
 │   └── view_constants.py        # Visualize constants
+├── datasets/                     # Dataset storage (create manually)
+│   └── digit-recognizer/        # Kaggle digit recognizer data
+├── models/                       # Model implementations
+│   └── digit_classifier.ipynb   # Digit classifier with temporal arithmetic
 ├── optimizers/                   # Training and optimization
 │   └── nlse_optimizer.py        # Adam-based constant optimizer
 ├── tests/                        # Validation and testing
@@ -75,6 +79,7 @@ nlse-nlde-const-optim-2/
 - PyTorch
 - NumPy
 - Matplotlib
+- Kaggle API (for dataset downloads)
 
 ### Setup
 ```bash
@@ -84,6 +89,21 @@ cd nlse-nlde-const-optim-2
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Create datasets directory
+mkdir datasets
+
+# Set up Kaggle API (if testing temporal models)
+# 1. Create a Kaggle account at https://www.kaggle.com
+# 2. Go to Account settings and create an API token
+# 3. Download kaggle.json and place it in ~/.kaggle/
+# 4. Set permissions: chmod 600 ~/.kaggle/kaggle.json
+
+# Download the digit recognizer dataset
+kaggle competitions download -c digit-recognizer
+
+# Unzip the dataset into the datasets folder
+unzip digit-recognizer.zip -d datasets/digit-recognizer/
 ```
 
 > **Important**: All commands should be run from the project root directory (`nlse-nlde-const-optim-2/`) since the project uses `utils` as a package.
@@ -101,6 +121,23 @@ python3 -m tests.nlse
 ```
 
 This evaluates nLSE accuracy across different numbers of max_terms (1-10, 15, 20) and generates an accuracy plot.
+
+### Testing Temporal Models
+
+Test temporal arithmetic operations on real-world tasks using the digit classifier:
+
+```bash
+# Open the digit classifier notebook
+jupyter notebook models/digit_classifier.ipynb
+```
+
+The `digit_classifier.ipynb` notebook demonstrates:
+- Training a neural network with temporal arithmetic operations (nLSE/nLDE)
+- Using the Kaggle digit recognizer dataset
+- Evaluating accuracy and energy efficiency trade-offs
+- Comparing temporal vs. traditional digital implementations
+
+**Prerequisites**: Ensure you've downloaded and set up the digit recognizer dataset (see Installation section).
 
 ### Optimizing Constants
 
