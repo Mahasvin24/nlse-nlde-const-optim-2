@@ -1,10 +1,17 @@
 import torch
 import matplotlib.pyplot as plt
+import os
 
 # Loading constants
 data = torch.load("constants/orig_constants.pt")
-E_VALUES = data["E_VALUES"]
-F_VALUES = data["F_VALUES"]
+if "E_VALUES" in data and "F_VALUES" in data:
+    E_VALUES = data["E_VALUES"]
+    F_VALUES = data["F_VALUES"]
+else:
+    # Fallback for quick pipeline testing: reuse nLSE constants as nLDE constants.
+    # If you later add true E_VALUES/F_VALUES, this will automatically switch back.
+    E_VALUES = data["C_VALUES"]
+    F_VALUES = data["D_VALUES"]
 
 # Uniform test value generation
 def uniform_values(count: int) -> torch.Tensor:
@@ -15,42 +22,35 @@ def uniform_values(count: int) -> torch.Tensor:
     """
     return torch.rand(count).reshape(-1, 1)
 
-# This might be flipped... or not...
-def inhibit(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """ Fully vectorized version that mimics the temporal inhibit function """
-    inf_tensor = torch.full_like(a, torch.inf)
-    return torch.where(b < a, b, inf_tensor) # element-wise
+def inhibit(t_i: torch.Tensor, t_d: torch.Tensor) -> torch.Tensor:
+    """Vectorized temporal inhibit: output t_d where t_d < t_i, else +inf."""
+    return torch.where(t_d < t_i, t_d, torch.full_like(t_d, torch.inf))
+
 
 def nlde(x_p: torch.Tensor, y_p: torch.Tensor, E: torch.Tensor, F: torch.Tensor) -> torch.Tensor:
-    """
-    Performs the nLDE described in the paper
-    20 or 25 max_terms is best (according to paper)
-    max_terms are decided by the shape of E and F
-
-    It is assumed that arguments are passed with the proper shape.
+    """Vectorized nLDE approximation (Eq. 7).
 
     Args:
-        x_p: column vector of values shape=(N, 1)
-        y_p: column vector of values shape=(N, 1)
-        E: row vector of values from constants.py of shape=(1, max_terms)
-        F: row vector of values from constants.py of shape=(1, max_terms)
-        test: prints the matrix before minum when set to true
+        x_p: delay of the LARGER importance value (smaller delay), shape (N, 1)
+        y_p: delay of the SMALLER importance value (larger delay),  shape (N, 1)
+        E: inhibit-term constants, shape (1, max_terms) or (max_terms,)
+        F: inhibit-term constants, shape (1, max_terms) or (max_terms,)
+
+    E pairs with the larger delay (y_p, inhibitor side),
+    F pairs with the smaller delay (x_p, data side).
     """
-    # Mismatched lengths
     if x_p.shape != y_p.shape:
         raise ValueError("Arguments x_p and y_p must have the same shape.")
     if E.shape != F.shape:
         raise ValueError("Arguments E and F must have the same shape.")
 
-    X = x_p + E # shape=(N, max_terms) --> each row is an example
-    Y = y_p + F # shape=(N, max_terms) --> each row is an example
+    inhibitor = y_p + E   # (N, max_terms) -- larger delay + E
+    data_event = x_p + F  # (N, max_terms) -- smaller delay + F
 
-    # inhibit(x + E, y + F) --> each row is an example
-    inhibit_terms = inhibit(X, Y) # shape=(N, max_terms) --> element wise (X INHIBITS Y)
-    
-    nlde, _ = torch.min(inhibit_terms, dim=1) # shape=(N,)
+    inhibit_terms = inhibit(inhibitor, data_event)  # (N, max_terms)
 
-    return nlde
+    result, _ = torch.min(inhibit_terms, dim=1)  # (N,)
+    return result
 
 def test_nlde(max_terms: int, device: torch.device, print_stats: bool = False):
     """
@@ -67,7 +67,7 @@ def test_nlde(max_terms: int, device: torch.device, print_stats: bool = False):
     epsilon = 1e-6
 
     # Number of random input samples
-    count = 10_000_000
+    count = int(os.getenv("NLDE_COUNT", "10000000"))
 
     # Draw uniform samples in [0,1)
     x = uniform_values(count).to(device)
@@ -88,28 +88,23 @@ def test_nlde(max_terms: int, device: torch.device, print_stats: bool = False):
     y_p = - torch.log(y)
 
     # Load E, F constants for this term count
-    E = E_VALUES[max_terms].to(device).reshape(-1)
-    F = F_VALUES[max_terms].to(device).reshape(-1)
+    E = E_VALUES[max_terms].to(device)
+    F = F_VALUES[max_terms].to(device)
 
-    # Constant shift K ensures all constants are non-negative
-    # minimum_constant = min(E.min().item(), F.min().item())
-    # K = -minimum_constant if minimum_constant < 0 else 0.0
-    K = E_VALUES[max_terms][-1]
-
-    # nLDE approximation: nLDE + K = nLDE(x + K, y + K, inhibit(E_0 + K, F_0 + K)...)
-    temporal_output = nlde(x_p + K, y_p + K, E + K, F + K) - K
+    # nLDE approximation (K-shift is a no-op for inhibit-based nLDE)
+    temporal_output = nlde(x_p, y_p, E, F)
     importance_output = torch.exp(-temporal_output)
 
     # RNRMSE
     rmse = torch.sqrt(torch.mean((exact - importance_output) ** 2))
-    range = torch.max(exact) - torch.min(exact)
-    error = (rmse / range) * 100
+    val_range = torch.max(exact) - torch.min(exact)
+    error = (rmse / val_range) * 100
 
     # Print
     if print_stats:
         print(f"Error for {max_terms} max terms: {error:.2f}%")
 
-    return error
+    return error.item()
 
 
 if __name__ == "__main__":
