@@ -1,145 +1,93 @@
 import torch
 
-# nLSE
-def nlse(x_p: torch.Tensor, y_p: torch.Tensor, C: torch.Tensor, D: torch.Tensor) -> torch.Tensor:
-    """
-    !!! Inputs and Outputs are in Delay Space !!!
-    Performs the nLSE described in the paper 
-    Beyond 7-10, max_terms, there isn't much of a benefit (according to ASPLOS paper)
-    max_terms are decided by the shape of C and D
+from utils.helpers import guassian_noise, inhibit
 
-    It is assumed that arguments are passed with the proper shape.
+
+def nlse(x_p: torch.Tensor, y_p: torch.Tensor, C: torch.Tensor, D: torch.Tensor) -> torch.Tensor:
+    """Min-of-max nLSE approximation (paper Eq. 6).
+
+    All tensors are in delay space. Returns delay-space output.
 
     Args:
-        x_p: column vector of values shape=(N, 1)
-        y_p: column vector of values shape=(N, 1)
-        C: row vector of values from constants.py of shape=(1, max_terms)
-        D: row vector of values from constants.py of shape=(1, max_terms)
-        test: prints the matrix before minum when set to true
+        x_p: column vector (N, 1)
+        y_p: column vector (N, 1)
+        C, D: row vectors (1, max_terms) of optimized constants
     """
-    # Mismatched lengths
     if x_p.shape != y_p.shape:
-        raise ValueError("Arguments x and y must have the same shape.")
+        raise ValueError("Arguments x_p and y_p must have the same shape.")
     if C.shape != D.shape:
         raise ValueError("Arguments C and D must have the same shape.")
 
-    # K value shift to avoid negative terms
     K = -torch.min(torch.cat((C, D))).to(x_p.device)
     x_p = x_p + K
     y_p = y_p + K
 
-    # ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! 
-    # x_p should be smaller than y_p but flipped works better????
-    # ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !
-
-    # Ensuring x_p <= y_p
+    # Order so first operand has larger delay (paper Section 2.1: keep first >= second)
     x_p, y_p = (
-        torch.maximum(x_p, y_p).reshape(-1, 1).to(x_p.device), 
-        torch.minimum(x_p, y_p).reshape(-1, 1).to(x_p.device)
+        torch.maximum(x_p, y_p).reshape(-1, 1),
+        torch.minimum(x_p, y_p).reshape(-1, 1),
     )
 
-    X = x_p + C # shape=(N, max_terms) --> each row is an example
-    Y = y_p + D # shape=(N, max_terms) --> each row is an example
+    X = x_p + C
+    Y = y_p + D
+    maximum_terms = torch.maximum(X, Y)
+    all_terms = torch.cat((x_p, y_p, maximum_terms), dim=1)
 
-    # max(x + C, y + D) --> each row is an example
-    maximum_terms = torch.maximum(X, Y) # shape=(N, max_terms) --> element wise maximum
+    out, _ = torch.min(all_terms, dim=1)
+    return out - K
 
-    all_terms = torch.cat((x_p, y_p, maximum_terms), dim=1) # shape=(N, max_terms + 2)
-    
-    nlse, _ = torch.min(all_terms, dim=1) # shape=(N,)
 
-    return nlse - K
-
-# nLDE
 def nlde(x_p: torch.Tensor, y_p: torch.Tensor, E: torch.Tensor, F: torch.Tensor) -> torch.Tensor:
-    """
-    Performs the nLDE described in the paper
-    20 or 25 max_terms is best (according to paper)
-    max_terms are decided by the shape of E and F
+    """Min-of-inhibit nLDE approximation (paper Eq. 7).
 
-    It is assumed that arguments are passed with the proper shape.
+    All tensors are in delay space. Returns delay-space output.
 
     Args:
-        x_p: column vector of values shape=(N, 1)
-        y_p: column vector of values shape=(N, 1)
-        E: row vector of values from constants.py of shape=(1, max_terms)
-        F: row vector of values from constants.py of shape=(1, max_terms)
-        test: prints the matrix before minum when set to true
+        x_p: delay of larger importance value (smaller delay), shape (N, 1)
+        y_p: delay of smaller importance value (larger delay), shape (N, 1)
+        E, F: row vectors (1, max_terms); E pairs with inhibitor (y_p), F with data (x_p)
+
+    inhibit(t_i, t_d) passes t_d when t_d < t_i else +inf.
     """
-    # Mismatched lengths
     if x_p.shape != y_p.shape:
         raise ValueError("Arguments x_p and y_p must have the same shape.")
     if E.shape != F.shape:
         raise ValueError("Arguments E and F must have the same shape.")
-    
-    # Injecting noise
-    # max_terms = E.shape[1]
-    # std_dev = 0.05 * max_terms
-    # E_noise = torch.normal(mean=0, std=std_dev, size=E.shape) # gaussian
-    # F_noise = torch.normal(mean=0, std=std_dev, size=F.shape)
-    # E = E + E_noise
-    # F = F + F_noise
 
-    X = x_p + E # shape=(N, max_terms) --> each row is an example
-    Y = y_p + F # shape=(N, max_terms) --> each row is an example
+    inhibitor = y_p + E
+    data_event = x_p + F
+    inhibit_terms = inhibit(inhibitor, data_event)
 
-    # max(x + E, y + F) --> each row is an example
-    inhibit_terms = inhibit(X, Y) # shape=(N, max_terms) --> element wise maximum
-    
-    nlde, _ = torch.min(inhibit_terms, dim=1) # shape=(N,)
+    out, _ = torch.min(inhibit_terms, dim=1)
+    return out
 
-    return nlde
 
-# nLSE w/ noise
 def nlse_noisy(x: torch.Tensor, y: torch.Tensor, C: torch.Tensor, D: torch.Tensor) -> torch.Tensor:
-    """
-    Performs the nLSE described in the paper
-    Beyond 7-10, max_terms, there isn't much of a benefit (according to ASPLOS paper)
-    max_terms are decided by the shape of C and D
-
-    It is assumed that arguments are passed with the proper shape.
+    """nLSE with pre/post VTC noise on importance and delay values.
 
     Args:
-        x_p: column vector of values shape=(N, 1)
-        y_p: column vector of values shape=(N, 1)
-        C: row vector of values from constants.py of shape=(1, max_terms)
-        D: row vector of values from constants.py of shape=(1, max_terms)
-        test: prints the matrix before minum when set to true
+        x, y: importance-space column vectors (N, 1)
+        C, D: row vectors (1, max_terms)
+
+    Returns delay-space output (same convention as ``nlse``).
     """
-    # Mismatched lengths
     if x.shape != y.shape:
         raise ValueError("Arguments x and y must have the same shape.")
     if C.shape != D.shape:
         raise ValueError("Arguments C and D must have the same shape.")
-    
-    # Useful vars
+
     epsilon = 1e-9
     max_importance = 1.0
-    max_delay = - torch.log(torch.tensor(epsilon))
+    max_delay = -torch.log(torch.tensor(epsilon, device=x.device))
     device = x.device
-    
-    # Pre-VTC noise injection
+
     x_noisy = torch.clamp(x + guassian_noise(x.shape[0], device=device), min=epsilon, max=max_importance)
     y_noisy = torch.clamp(y + guassian_noise(y.shape[0], device=device), min=epsilon, max=max_importance)
 
-    # Delay space conversion
-    x_p = - torch.log(x_noisy)
-    y_p = - torch.log(y_noisy)
+    x_p = -torch.log(x_noisy)
+    y_p = -torch.log(y_noisy)
 
-    # Post-VTC noise injection
     x_p = torch.clamp(x_p + guassian_noise(x_p.shape[0], device=device), min=epsilon, max=max_delay)
     y_p = torch.clamp(y_p + guassian_noise(y_p.shape[0], device=device), min=epsilon, max=max_delay)
 
-    X = x_p + C # shape=(N, max_terms) --> each row is an example
-    Y = y_p + D # shape=(N, max_terms) --> each row is an example
-
-    # max(x + C, y + D) --> each row is an example
-    maximum_terms = torch.maximum(X, Y) # shape=(N, max_terms) --> element wise maximum
-
-    all_terms = torch.cat((x_p, y_p, maximum_terms), dim=1) # shape=(N, max_terms + 2)
-    
-    nlse, _ = torch.min(all_terms, dim=1) # shape=(N,)
-
-    return nlse
-
-
+    return nlse(x_p, y_p, C, D)

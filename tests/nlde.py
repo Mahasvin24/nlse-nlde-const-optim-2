@@ -1,6 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 import os
+import sys
 
 # Loading constants
 data = torch.load("constants/orig_constants.pt")
@@ -8,10 +9,8 @@ if "E_VALUES" in data and "F_VALUES" in data:
     E_VALUES = data["E_VALUES"]
     F_VALUES = data["F_VALUES"]
 else:
-    # Fallback for quick pipeline testing: reuse nLSE constants as nLDE constants.
-    # If you later add true E_VALUES/F_VALUES, this will automatically switch back.
-    E_VALUES = data["C_VALUES"]
-    F_VALUES = data["D_VALUES"]
+    print("Value fetch failed.")
+    sys.exit()
 
 # Uniform test value generation
 def uniform_values(count: int) -> torch.Tensor:
@@ -134,7 +133,7 @@ if __name__ == "__main__":
     plt.xlabel("Number of Max Terms")
     plt.ylabel("Accuracy (avg)")
 
-    plt.ylim(0, 100)
+    plt.ylim(90, 100)
 
     plt.grid(True)
 
