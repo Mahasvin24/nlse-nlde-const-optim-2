@@ -16,15 +16,28 @@ Weights live in **importance space** as standard `nn.Parameter` tensors. During 
 
 Reference: paper Section 2.2 (split-value representation), Section 4.4 (dedicated kernel handling).
 
-### Exact nLSE for training, approximation for inference
+### nLSE uses the min-of-max approximation (Eq. 6) everywhere
 
-The n-ary nLSE is computed exactly as `-logsumexp(-delays, dim)` during training. This gives smooth gradients through the full computation graph. The min-of-max approximation (paper Eq. 6) with C/D constants from `constants/` can be substituted for hardware-accurate inference evaluation. The layers in `temporal_layers.py` use the exact path only; approximate mode is future work.
+`temporal_layers.py` does **not** use `logsumexp`. Both the pairwise `nlse_2` and the n-ary `nary_nlse` implement the hardware-faithful min-of-max approximation from paper Eq. 6, matching `utils/temporal_artithmetic.py::nlse` bit-for-bit on pairwise inputs (verified numerically). The `(C, D)` constants are loaded once at import time from `constants/orig_constants.pt` (using `NLSE_MAX_TERMS = 7`) and cached per (device, dtype). Call `set_nlse_constants(C, D)` to swap in `learned_constants.pt` without touching the module.
 
-Reference: paper Eq. 4-6, Section 2.1.
+The hardware operator is strictly 2-ary, so n-ary kernel sums are implemented as a balanced binary tree of `nlse_2` calls (`ceil(log2 K)` rounds). Odd-sized levels are padded with `DELAY_CAP`, which is the identity element for nLSE.
+
+Reference: paper Eq. 4-6, Section 2.1; `utils/temporal_artithmetic.py`.
+
+### Gradient flow through the approximation
+
+The Eq. 6 form is piecewise: `out = min(a, b, min_i max(a + C_i, b + D_i))`. Gradient flows only through the argmin / argmax paths (sparse, like ReLU / max-pool), not through all operands like `logsumexp` would. Training still works because:
+- The tree reduction distributes gradient across the K kernel operands over log2(K) rounds.
+- Split-value weights receive gradient via both `a` and `b` sides of the pairwise min.
+- The log-domain gradient amplification of small weights (see below) compensates for the sparser routing.
+
+Empirically, the same architecture / LR that worked with the exact path continues to converge with the approximation; gradient clipping at 5.0 remains essential.
 
 ### DELAY_CAP sentinel (50.0)
 
-Rather than using `float('inf')` for "zero importance", all layers use `DELAY_CAP = 50.0`. This avoids NaN from `logsumexp` on all-inf inputs while being functionally equivalent (`exp(-50) ≈ 2e-22`). The cap is applied inside `nary_nlse` and `nlse_2`, and used as the fill value in `DelayEncoder`, `TemporalReLU`, padding, and dropout.
+Rather than using `float('inf')` for "zero importance", all layers use `DELAY_CAP = 50.0` (`exp(-50) ≈ 2e-22`). The cap is applied inside `nary_nlse` and `nlse_2`, and used as the fill value in `DelayEncoder`, `TemporalReLU`, conv padding, dropout, and the odd-level padding inside the `nary_nlse` tree reduction.
+
+Pairwise `nlse_2` applies the same `K = -min(C ∪ D)` shift as `utils/temporal_artithmetic.nlse`: on hardware, delays are non-negative physical times while `C_i`, `D_i` are negative offsets, so operands are lifted by `K` before the min-of-max network and `K` is subtracted at the output so the logical delay is unchanged. In float this pair is redundant but kept for parity with silicon.
 
 ### Padding in TemporalConv2d
 
@@ -52,7 +65,7 @@ Reference: paper Section 4.4.
 
 - **`F.pad` with `value=DELAY_CAP` works for autograd.** Padded positions are constants with zero gradient; non-padded gradients flow through `F.unfold` → products → nLSE normally.
 
-- **Training is ~50-80× slower per epoch than standard CNN** due to explicit product tensor construction (`(B, C_out, 2*K, L)`) and logsumexp reduction. Acceptable for MNIST; larger datasets would need custom CUDA kernels or the importance-space shortcut (mathematically equivalent for exact nLSE).
+- **Training is ~50-80× slower per epoch than standard CNN** due to explicit product tensor construction (`(B, C_out, 2*K, L)`) and the tree-reduced min-of-max reduction. Peak activation memory is ~`M × batch × Co × K × L` floats during the first round of `nary_nlse` (M = `NLSE_MAX_TERMS`); shrink `NLSE_MAX_TERMS` or batch size if you run out of memory on larger kernels. Acceptable for MNIST at the default config.
 
 - **The model reaches ~90% val accuracy in 3 epochs** on MNIST with the architecture `Conv(1→8) → Conv(8→16) → FC(784→64) → FC(64→10)`. Standard CNN equivalent reaches ~98% in 10 epochs.
 

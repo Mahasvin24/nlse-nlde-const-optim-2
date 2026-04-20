@@ -9,18 +9,25 @@ All computation happens in delay space where x' = -ln(x) (Eq. 1-2).
 
 Core delay-space operation mapping:
   Multiplication:  x * y   ->  x' + y'               (delay addition)
-  Addition:        x + y   ->  nLSE(x', y')           (Eq. 4)
-  Subtraction:     x - y   ->  nLDE(x', y')           (Eq. 5)
+  Addition:        x + y   ->  nLSE(x', y')           (Eq. 4, Eq. 6 approx)
+  Subtraction:     x - y   ->  nLDE(x', y')           (Eq. 5, Eq. 7 approx)
 
 Negative numbers use split-value representation <x_pos, x_neg>
 (paper Sections 2.2, 4.4).
 
-Training uses the exact nLSE formula via logsumexp for smooth
-gradients; the min-of-max approximation (Eq. 6) with C/D constants
-can be swapped in for hardware-accurate inference.
+Delay-space addition uses the hardware-faithful min-of-max nLSE
+approximation from paper Eq. 6 (see ``utils.temporal_artithmetic.nlse``):
+
+    nLSE(x', y') ~= min(x', y', max_i(x' + C_i, y' + D_i))
+
+with the (C, D) constants loaded from ``constants/orig_constants.pt``.
+The n-ary reduction required by conv / linear layers is performed by
+folding this pairwise approximation over the kernel dimension via a
+tree reduction.  No ``logsumexp`` is used anywhere inside the layers.
 """
 
 import math
+from pathlib import Path
 from typing import NamedTuple, Optional
 
 import torch
@@ -33,6 +40,51 @@ import torch.nn.functional as F
 # ---------------------------------------------------------------------------
 EPS = 1e-7
 DELAY_CAP = 50.0
+NLSE_MAX_TERMS = 7
+NLDE_MAX_TERMS = 7
+
+
+# ---------------------------------------------------------------------------
+# nLSE approximation constants (paper Eq. 6)
+# ---------------------------------------------------------------------------
+# Loaded once at import time from the shared constants bundle so every
+# delay-space layer uses the same (C, D) vectors that `utils.temporal_artithmetic`
+# and the test / optimisation scripts use.  Lazily moved to the right
+# device / dtype on first use and cached.
+_CONSTANTS_PATH = (
+    Path(__file__).resolve().parent.parent / "constants" / "orig_constants.pt"
+)
+_constants_bundle = torch.load(_CONSTANTS_PATH, map_location="cpu")
+_C_BASE = _constants_bundle["C_VALUES"][NLSE_MAX_TERMS].reshape(-1).detach()
+_D_BASE = _constants_bundle["D_VALUES"][NLSE_MAX_TERMS].reshape(-1).detach()
+_CONST_CACHE: dict = {}
+
+
+def set_nlse_constants(C: torch.Tensor, D: torch.Tensor) -> None:
+    """Override the (C, D) vectors used by the delay-space nLSE approximation.
+
+    Useful for swapping between ``orig_constants.pt`` and ``learned_constants.pt``
+    at runtime without editing the module.  Shape must be 1-D of equal length.
+    """
+    global _C_BASE, _D_BASE, _CONST_CACHE
+    C_flat = C.reshape(-1).detach().cpu()
+    D_flat = D.reshape(-1).detach().cpu()
+    if C_flat.shape != D_flat.shape:
+        raise ValueError("C and D must have the same number of terms.")
+    _C_BASE, _D_BASE = C_flat, D_flat
+    _CONST_CACHE = {}
+
+
+def _get_cd(device: torch.device, dtype: torch.dtype):
+    key = (device, dtype)
+    cached = _CONST_CACHE.get(key)
+    if cached is None:
+        cached = (
+            _C_BASE.to(device=device, dtype=dtype),
+            _D_BASE.to(device=device, dtype=dtype),
+        )
+        _CONST_CACHE[key] = cached
+    return cached
 
 
 # ---------------------------------------------------------------------------
@@ -63,24 +115,73 @@ def to_importance(x_p: torch.Tensor) -> torch.Tensor:
     return torch.exp(-x_p)
 
 
-def nary_nlse(delays: torch.Tensor, dim: int) -> torch.Tensor:
-    """Exact n-ary nLSE (delay-space addition of *n* values).
-
-    nLSE(x1', …, xn')  =  -ln(Σ e^{-xi'})
-                         =  -logsumexp(-x', dim)
-
-    Large delays are clamped to DELAY_CAP so that all-zero-importance
-    edge cases don't produce NaN.
-    """
-    return -torch.logsumexp(-torch.clamp(delays, max=DELAY_CAP), dim=dim)
-
-
 def nlse_2(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """Exact pairwise nLSE: nLSE(a', b') = -logaddexp(-a', -b')."""
-    return -torch.logaddexp(
-        -torch.clamp(a, max=DELAY_CAP),
-        -torch.clamp(b, max=DELAY_CAP),
-    )
+    """Pairwise min-of-max nLSE approximation (paper Eq. 6).
+
+    Shape-agnostic version of ``utils.temporal_artithmetic.nlse``: ``a`` and
+    ``b`` may be any broadcast-compatible delay tensors.
+
+    **Hardware role of the K-shift.** On silicon, a delay is a physical time
+    offset: delay lines, arbiters, and pulse generators only represent
+    *non-negative* delays. The optimised constants ``C_i``, ``D_i`` are
+    negative offsets; without lifting the operands, quantities such as
+    ``x' + C_i`` can fall below zero and have no direct physical encoding.
+    The uniform shift ``K = -min(C ∪ D)`` is applied to *both* inputs before
+    the min-of-max network so every intermediate that must be realised as a
+    delay in the hardware stays in the non-negative range the circuits
+    implement. The same shift is subtracted at the output so the *logical*
+    delay (what Eq. 6 denotes) is unchanged—translation in delay space is an
+    overall scaling in importance space that must cancel at the end.
+
+    In IEEE-754 this ``+K`` / ``-K`` pair is algebraically redundant (the
+    min/max structure is translation-invariant), but we keep it so
+    simulation matches the hardware datapath and stays numerically aligned
+    with ``utils.temporal_artithmetic.nlse``.
+    """
+    a = torch.clamp(a, max=DELAY_CAP)
+    b = torch.clamp(b, max=DELAY_CAP)
+
+    C, D = _get_cd(a.device, a.dtype)
+    K = -torch.min(torch.cat((C, D)))
+
+    a = a + K
+    b = b + K
+
+    # Larger delay (smaller importance) pairs with C; smaller delay with D.
+    hi = torch.maximum(a, b)
+    lo = torch.minimum(a, b)
+
+    X = hi.unsqueeze(-1) + C  # (..., M)
+    Y = lo.unsqueeze(-1) + D  # (..., M)
+    max_terms_min = torch.maximum(X, Y).min(dim=-1).values  # min_i max(X_i, Y_i)
+
+    out = torch.minimum(torch.minimum(hi, lo), max_terms_min)
+    return out - K
+
+
+def nary_nlse(delays: torch.Tensor, dim: int) -> torch.Tensor:
+    """n-ary nLSE via pairwise tree reduction of the Eq. 6 approximation.
+
+    The hardware operator is strictly 2-ary, so a kernel-sum of K delay
+    values is realised by folding ``nlse_2`` over the operand dimension
+    in a balanced binary tree (ceil(log2 K) rounds).  Odd-sized levels
+    are padded with ``DELAY_CAP`` (zero importance), which is an
+    identity element for nLSE.
+
+    Large delays are clamped to ``DELAY_CAP`` so all-zero-importance
+    edge cases don't overflow the shift term.
+    """
+    x = torch.clamp(delays, max=DELAY_CAP).movedim(dim, -1)
+
+    while x.shape[-1] > 1:
+        if x.shape[-1] % 2 == 1:
+            pad = torch.full_like(x[..., :1], DELAY_CAP)
+            x = torch.cat([x, pad], dim=-1)
+        left = x[..., 0::2]
+        right = x[..., 1::2]
+        x = nlse_2(left, right)
+
+    return x.squeeze(-1)
 
 
 # ---------------------------------------------------------------------------

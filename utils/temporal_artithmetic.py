@@ -8,6 +8,13 @@ def nlse(x_p: torch.Tensor, y_p: torch.Tensor, C: torch.Tensor, D: torch.Tensor)
 
     All tensors are in delay space. Returns delay-space output.
 
+    The uniform shift ``K = -min(C ∪ D)`` applied before the min-of-max tree
+    and removed after (``out - K``) matches the hardware datapath: physical
+    delays are non-negative, while the optimised ``C_i``, ``D_i`` are
+    negative—lifting both operands by ``K`` keeps intermediate delay-line
+    values representable on chip. Algebraically the shift cancels in
+    floating point; it is kept for silicon fidelity.
+
     Args:
         x_p: column vector (N, 1)
         y_p: column vector (N, 1)
